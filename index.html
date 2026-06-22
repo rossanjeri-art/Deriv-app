@@ -1,33 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Deriv Multi Index Signal</title>
+  <title>Deriv Multi Index Dashboard</title>
   <style>
     body {
       font-family: Arial;
       background: #0b1220;
       color: white;
       text-align: center;
-      padding: 15px;
-    }
-
-    .card {
-      background: #162033;
-      margin: 10px auto;
-      padding: 12px;
-      border-radius: 10px;
-      max-width: 400px;
-    }
-
-    .big {
-      font-size: 32px;
-      font-weight: bold;
+      padding: 10px;
     }
 
     .grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .card {
+      background: #162033;
+      padding: 10px;
+      border-radius: 10px;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+    }
+
+    .big {
+      font-size: 24px;
+      font-weight: bold;
     }
 
     .green { color: #22c55e; }
@@ -38,46 +42,29 @@
 
 <body>
 
-<h2>Deriv Multi-Index Signal</h2>
+<h2>Deriv Multi Index Dashboard</h2>
 
-<div class="card">
-  <label>Select Index:</label>
-  <select id="symbol" onchange="switchSymbol()">
-    <option>R_10</option>
-    <option>R_25</option>
-    <option>R_50</option>
-    <option selected>R_75</option>
-    <option>R_100</option>
-  </select>
-</div>
-
-<div class="card">
-  <div>Last Digit</div>
-  <div id="last" class="big">-</div>
-</div>
-
-<div class="card">
-  <div>Confidence</div>
-  <div id="confidence" class="big">0</div>
-</div>
-
-<div class="card">
-  <div>Signal</div>
-  <div id="signal" class="big">WAIT</div>
-</div>
-
-<div class="card">
-  <h3>Digit Frequency</h3>
-  <div id="freq"></div>
-</div>
+<div class="grid" id="dashboard"></div>
 
 <script>
-let ws;
-let counts = Array(10).fill(0);
-let ticks = [];
+const symbols = ["R_10","R_25","R_50","R_75","R_100"];
+
+let data = {};
+
+symbols.forEach(s => {
+  data[s] = {
+    ws: null,
+    counts: Array(10).fill(0),
+    ticks: [],
+    lastDigit: "-"
+  };
+  connect(s);
+});
 
 function connect(symbol) {
-  ws = new WebSocket("wss://ws.derivws.com/websockets/v3");
+  let ws = new WebSocket("wss://ws.derivws.com/websockets/v3");
+
+  data[symbol].ws = ws;
 
   ws.onopen = function () {
     ws.send(JSON.stringify({
@@ -87,75 +74,77 @@ function connect(symbol) {
   };
 
   ws.onmessage = function (msg) {
-    let data = JSON.parse(msg.data);
+    let res = JSON.parse(msg.data);
 
-    if (data.tick) {
-      let price = data.tick.quote;
+    if (res.tick) {
+      let price = res.tick.quote;
       let digit = parseInt(String(Math.floor(price)).slice(-1));
 
-      document.getElementById("last").innerText = digit;
+      let d = data[symbol];
 
-      counts[digit]++;
-      ticks.push(digit);
+      d.lastDigit = digit;
+      d.counts[digit]++;
+      d.ticks.push(digit);
 
-      if (ticks.length > 100) ticks.shift();
+      if (d.ticks.length > 100) {
+        let removed = d.ticks.shift();
+        d.counts[removed]--;
+      }
 
-      updateUI();
+      render();
     }
   };
 }
 
-function switchSymbol() {
-  let symbol = document.getElementById("symbol").value;
-
-  counts = Array(10).fill(0);
-  ticks = [];
-
-  if (ws) ws.close();
-
-  connect(symbol);
-}
-
-function updateUI() {
-  let total = ticks.length;
-  if (total < 10) return;
-
-  let expected = total / 10;
-  let imbalance = 0;
-
-  for (let i = 0; i < 10; i++) {
-    imbalance += Math.abs(counts[i] - expected);
-  }
-
-  let confidence = Math.min(100, (imbalance / total) * 130);
-
-  let hotDigit = counts.indexOf(Math.max(...counts));
-
-  let signal = "NO TRADE";
-
-  if (confidence > 70) {
-    signal = "HIGH BIAS → DIGIT " + hotDigit;
-  } else if (confidence > 45) {
-    signal = "WATCH DIGIT " + hotDigit;
-  }
-
-  document.getElementById("confidence").innerText = confidence.toFixed(1);
-  document.getElementById("signal").innerText = signal;
-
-  document.getElementById("signal").className =
-    confidence > 70 ? "green big" :
-    confidence > 45 ? "orange big" : "red big";
-
+function render() {
   let html = "";
-  for (let i = 0; i < 10; i++) {
-    html += `Digit ${i}: ${counts[i]}<br>`;
-  }
 
-  document.getElementById("freq").innerHTML = html;
+  symbols.forEach(symbol => {
+    let d = data[symbol];
+
+    let hot = d.counts.indexOf(Math.max(...d.counts));
+    let cold = d.counts.indexOf(Math.min(...d.counts));
+
+    let total = d.ticks.length;
+
+    let imbalance = 0;
+    for (let i = 0; i < 10; i++) {
+      imbalance += Math.abs(d.counts[i] - total/10);
+    }
+
+    let randomness = Math.min(100, (1 - (imbalance / (total + 1))) * 100);
+
+    html += `
+      <div class="card">
+        <h3>${symbol}</h3>
+
+        <div class="row">
+          <div>Last Digit:</div>
+          <div class="big">${d.lastDigit}</div>
+        </div>
+
+        <div class="row">
+          <div>Hot Digit:</div>
+          <div class="green">${hot} (${d.counts[hot]})</div>
+        </div>
+
+        <div class="row">
+          <div>Cold Digit:</div>
+          <div class="red">${cold} (${d.counts[cold]})</div>
+        </div>
+
+        <div class="row">
+          <div>Randomness:</div>
+          <div class="${randomness > 70 ? 'green' : randomness > 40 ? 'orange' : 'red'}">
+            ${randomness.toFixed(1)}%
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  document.getElementById("dashboard").innerHTML = html;
 }
-
-// start default
-connect("R_75");
 </script>
 
 </body>
