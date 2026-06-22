@@ -1,10 +1,162 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>My Deriv App</title>
+  <title>Deriv Multi Index Signal</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #0b1220;
+      color: white;
+      text-align: center;
+      padding: 15px;
+    }
+
+    .card {
+      background: #162033;
+      margin: 10px auto;
+      padding: 12px;
+      border-radius: 10px;
+      max-width: 400px;
+    }
+
+    .big {
+      font-size: 32px;
+      font-weight: bold;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .green { color: #22c55e; }
+    .orange { color: #f59e0b; }
+    .red { color: #ef4444; }
+  </style>
 </head>
-<body style="background:black;color:white;text-align:center;padding:50px;">
-  <h1>IT WORKS ✔</h1>
-  <p>Your GitHub Pages is now working</p>
+
+<body>
+
+<h2>Deriv Multi-Index Signal</h2>
+
+<div class="card">
+  <label>Select Index:</label>
+  <select id="symbol" onchange="switchSymbol()">
+    <option>R_10</option>
+    <option>R_25</option>
+    <option>R_50</option>
+    <option selected>R_75</option>
+    <option>R_100</option>
+  </select>
+</div>
+
+<div class="card">
+  <div>Last Digit</div>
+  <div id="last" class="big">-</div>
+</div>
+
+<div class="card">
+  <div>Confidence</div>
+  <div id="confidence" class="big">0</div>
+</div>
+
+<div class="card">
+  <div>Signal</div>
+  <div id="signal" class="big">WAIT</div>
+</div>
+
+<div class="card">
+  <h3>Digit Frequency</h3>
+  <div id="freq"></div>
+</div>
+
+<script>
+let ws;
+let counts = Array(10).fill(0);
+let ticks = [];
+
+function connect(symbol) {
+  ws = new WebSocket("wss://ws.derivws.com/websockets/v3");
+
+  ws.onopen = function () {
+    ws.send(JSON.stringify({
+      ticks: symbol,
+      subscribe: 1
+    }));
+  };
+
+  ws.onmessage = function (msg) {
+    let data = JSON.parse(msg.data);
+
+    if (data.tick) {
+      let price = data.tick.quote;
+      let digit = parseInt(String(Math.floor(price)).slice(-1));
+
+      document.getElementById("last").innerText = digit;
+
+      counts[digit]++;
+      ticks.push(digit);
+
+      if (ticks.length > 100) ticks.shift();
+
+      updateUI();
+    }
+  };
+}
+
+function switchSymbol() {
+  let symbol = document.getElementById("symbol").value;
+
+  counts = Array(10).fill(0);
+  ticks = [];
+
+  if (ws) ws.close();
+
+  connect(symbol);
+}
+
+function updateUI() {
+  let total = ticks.length;
+  if (total < 10) return;
+
+  let expected = total / 10;
+  let imbalance = 0;
+
+  for (let i = 0; i < 10; i++) {
+    imbalance += Math.abs(counts[i] - expected);
+  }
+
+  let confidence = Math.min(100, (imbalance / total) * 130);
+
+  let hotDigit = counts.indexOf(Math.max(...counts));
+
+  let signal = "NO TRADE";
+
+  if (confidence > 70) {
+    signal = "HIGH BIAS → DIGIT " + hotDigit;
+  } else if (confidence > 45) {
+    signal = "WATCH DIGIT " + hotDigit;
+  }
+
+  document.getElementById("confidence").innerText = confidence.toFixed(1);
+  document.getElementById("signal").innerText = signal;
+
+  document.getElementById("signal").className =
+    confidence > 70 ? "green big" :
+    confidence > 45 ? "orange big" : "red big";
+
+  let html = "";
+  for (let i = 0; i < 10; i++) {
+    html += `Digit ${i}: ${counts[i]}<br>`;
+  }
+
+  document.getElementById("freq").innerHTML = html;
+}
+
+// start default
+connect("R_75");
+</script>
+
 </body>
 </html>
