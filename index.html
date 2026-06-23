@@ -1,7 +1,177 @@
 <!DOCTYPE html>
 <html>
-<body style="background:black;color:white;text-align:center;padding:50px;">
-<h1>UPDATE TEST ✔</h1>
-<h2>If you see this, it is working</h2>
+<head>
+  <title>Deriv Advanced Dashboard</title>
+  <style>
+    body {
+      font-family: Arial;
+      background: #070b14;
+      color: white;
+      text-align: center;
+      padding: 10px;
+    }
+
+    h2 { margin-bottom: 10px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      max-width: 500px;
+      margin: auto;
+    }
+
+    .card {
+      background: #111a2e;
+      padding: 12px;
+      border-radius: 12px;
+      text-align: left;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      margin: 4px 0;
+      font-size: 14px;
+    }
+
+    .big {
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .green { color: #22c55e; }
+    .orange { color: #f59e0b; }
+    .red { color: #ef4444; }
+    .blue { color: #60a5fa; }
+  </style>
+</head>
+
+<body>
+
+<h2>Deriv Advanced Market Dashboard</h2>
+
+<div class="grid" id="dashboard"></div>
+
+<script>
+const symbols = [
+  "R_10","R_25","R_50","R_75","R_100",
+  "1HZ10V","1HZ25V","1HZ50V","1HZ75V","1HZ100V"
+];
+
+let data = {};
+
+symbols.forEach(s => {
+  data[s] = {
+    counts: Array(10).fill(0),
+    ticks: [],
+    lastDigit: "-"
+  };
+  connect(s);
+});
+
+function connect(symbol) {
+  let ws = new WebSocket("wss://ws.derivws.com/websockets/v3");
+
+  data[symbol].ws = ws;
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({
+      ticks: symbol,
+      subscribe: 1
+    }));
+  };
+
+  ws.onmessage = (msg) => {
+    try {
+      let res = JSON.parse(msg.data);
+      if (!res.tick) return;
+
+      let price = res.tick.quote;
+      let digit = parseInt(String(Math.floor(price)).slice(-1));
+
+      let d = data[symbol];
+
+      d.lastDigit = digit;
+      d.counts[digit]++;
+      d.ticks.push(digit);
+
+      if (d.ticks.length > 120) {
+        let removed = d.ticks.shift();
+        d.counts[removed]--;
+      }
+
+      render();
+
+    } catch (e) {}
+  };
+}
+
+function render() {
+  let html = "";
+
+  symbols.forEach(symbol => {
+    let d = data[symbol];
+
+    let total = d.ticks.length || 1;
+
+    let hot = d.counts.indexOf(Math.max(...d.counts));
+    let cold = d.counts.indexOf(Math.min(...d.counts));
+
+    // market pressure (imbalance strength)
+    let imbalance = 0;
+    for (let i = 0; i < 10; i++) {
+      imbalance += Math.abs(d.counts[i] - total / 10);
+    }
+
+    let pressure = Math.min(100,
+      (imbalance / (total + 1)) * 120
+    );
+
+    // bias direction (simple)
+    let bias = pressure > 60 ? "STRONG MOVEMENT" :
+               pressure > 35 ? "MODERATE" :
+               "BALANCED";
+
+    let color =
+      pressure > 60 ? "red" :
+      pressure > 35 ? "orange" : "green";
+
+    html += `
+      <div class="card">
+        <div class="blue"><b>${symbol}</b></div>
+
+        <div class="row">
+          <div>Last Digit</div>
+          <div class="big">${d.lastDigit}</div>
+        </div>
+
+        <div class="row">
+          <div>Hot</div>
+          <div class="green">${hot} (${d.counts[hot]})</div>
+        </div>
+
+        <div class="row">
+          <div>Cold</div>
+          <div class="red">${cold} (${d.counts[cold]})</div>
+        </div>
+
+        <div class="row">
+          <div>Market Pressure</div>
+          <div class="${color}">${pressure.toFixed(1)}%</div>
+        </div>
+
+        <div class="row">
+          <div>State</div>
+          <div class="${color}"><b>${bias}</b></div>
+        </div>
+      </div>
+    `;
+  });
+
+  document.getElementById("dashboard").innerHTML = html;
+}
+</script>
+
 </body>
 </html>
